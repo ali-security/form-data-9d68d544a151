@@ -1,14 +1,87 @@
 name: 'Tests: node.js >= 10'
 
-on: [pull_request, push]
+on:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional test file filter'
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   tests:
-    uses: ljharb/actions/.github/workflows/node.yml@main
-    with:
-      range: '>= 10'
-      type: minors
-      command: npm run ci-test
+    name: 'Node ${{ matrix.node-version }}'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['23', '22', '20', '18', '16', '14', '12', '10']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Pin registry to the release-date time machine
+        run: npm config set registry https://:2025-02-14T21%3A56%3A16.969Z@time-machines-npm.sealsecurity.io/
+
+      # phantomjs-prebuilt's install hook downloads from a dead Bitbucket URL,
+      # so every install on this fork must skip lifecycle scripts.
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      # Upstream ran `npm run ci-test` (tests-only && browser && report). The
+      # `browser` half is browserify+obake+phantomjs and cannot run here, so only
+      # the `tests-only` half is kept -- it is the suite that exercises
+      # lib/form_data.js via test/run.js.
+      - name: Run tests
+        run: |
+          node -v
+          npm -v
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            echo "WARNING: test/run.js takes no file arguments -- it hardcodes"
+            echo "WARNING: far.add(__dirname) + far.include(/test-.*.js/) and never"
+            echo "WARNING: reads process.argv. The filter '${{ inputs.test-filter }}'"
+            echo "WARNING: is inert: the FULL suite below is what actually runs."
+            node test/run.js ${{ inputs.test-filter }}
+          else
+            npm run tests-only
+          fi
+
+  pack:
+    name: 'Pack tarball'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      # The public form-data-2.5.3.tgz was packed with Node 23.8.0 / npm 10.9.2.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '23.8.0'
+
+      - name: Match the publisher's npm version
+        run: npm i -g npm@10.9.2
+
+      # No `npm install` here on purpose: packing needs no dependencies and the
+      # tarball ships no node_modules. --ignore-scripts also keeps the
+      # `prepublish` badge rewrite off Readme.md, which 2.5.3 was published
+      # without.
+      - name: Pack
+        run: |
+          node -v
+          npm -v
+          npm pack --ignore-scripts
+          ls -l form-data-*.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: form-data-*.tgz
+          if-no-files-found: error

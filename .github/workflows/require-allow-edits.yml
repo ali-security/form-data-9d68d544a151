@@ -1,6 +1,7 @@
 name: Require “Allow Edits”
 
-on: [pull_request_target]
+on:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -13,6 +14,7 @@ jobs:
     name: "Require “Allow Edits”"
 
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: ljharb/require-allow-edits@main

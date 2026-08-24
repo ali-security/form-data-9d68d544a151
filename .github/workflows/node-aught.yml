@@ -1,14 +1,67 @@
 name: 'Tests: node.js < 10'
 
-on: [pull_request, push]
+on:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional test file filter'
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   tests:
-    uses: ljharb/actions/.github/workflows/node.yml@main
-    with:
-      range: '>= 0.12 < 10'
-      type: minors
-      command: npm run ci-test
+    name: 'Node ${{ matrix.node-version }}'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['0.12', '4', '6', '8']
+    steps:
+      - uses: actions/checkout@v4
+
+      # The npm bundled with Node 0.12/4 cannot resolve these devDependencies
+      # (eslint@6, tape@5.9), so dependencies are installed under a modern Node
+      # first and the runtime is swapped afterwards. node_modules is
+      # runtime-agnostic here: test/run.js and the integration tests only load
+      # far, cross-spawn, mime-types, formidable, fake, request and safe-buffer
+      # -- eslint and tape are never required by the suite.
+      - name: Set up Node 20 to install dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Pin registry to the release-date time machine
+        run: npm config set registry https://:2025-02-14T21%3A56%3A16.969Z@time-machines-npm.sealsecurity.io/
+
+      # phantomjs-prebuilt's install hook downloads from a dead Bitbucket URL,
+      # so every install on this fork must skip lifecycle scripts.
+      - name: Install dependencies (modern Node)
+        run: |
+          node -v
+          npm -v
+          npm install --ignore-scripts
+
+      - name: Swap runtime to Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # test/run.js is invoked directly rather than through `npm run tests-only`:
+      # istanbul's bin does not parse under these runtimes, and npm 2.x
+      # re-resolves run-scripts oddly. `node -v` above the suite is the proof of
+      # which runtime actually executed it.
+      - name: Run tests on Node ${{ matrix.node-version }}
+        run: |
+          node -v
+          npm -v
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            echo "WARNING: test/run.js takes no file arguments -- it hardcodes"
+            echo "WARNING: far.add(__dirname) + far.include(/test-.*.js/) and never"
+            echo "WARNING: reads process.argv. The filter '${{ inputs.test-filter }}'"
+            echo "WARNING: is inert: the FULL suite below is what actually runs."
+          fi
+          node test/run.js ${{ inputs.test-filter }}

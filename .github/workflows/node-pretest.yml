@@ -1,10 +1,33 @@
 name: 'Tests: pretest/posttest'
 
-on: [pull_request, push]
+on:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 jobs:
   tests:
-    uses: ljharb/actions/.github/workflows/pretest.yml@main
+    name: 'Lint'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Pin registry to the release-date time machine
+        run: npm config set registry https://:2025-02-14T21%3A56%3A16.969Z@time-machines-npm.sealsecurity.io/
+
+      # phantomjs-prebuilt's install hook downloads from a dead Bitbucket URL,
+      # so every install on this fork must skip lifecycle scripts.
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      # This is the `pretest` half only. The `posttest` half is
+      # `npx npm@'>=10.2' audit --production`, which needs the live registry we
+      # pin away and would fail this leg on unrelated advisories.
+      - name: Lint
+        run: npm run lint
